@@ -39,13 +39,10 @@ K-Surveyflow는 CSV 형태의 설문조사 데이터를 입력받아 HTML 형태
 # 1. 프로젝트 디렉토리로 이동
 cd /path/to/K-Surveyflow
 
-# 2. 기본 CSV 파일로 보고서 생성
-python report_generator.py
+# 2. 특정 CSV 파일로 보고서 생성
+python main.py --csv_file data/20250916_sample_data.csv
 
-# 3. 특정 CSV 파일로 보고서 생성
-python report_generator.py --csv data/your_data.csv
-
-# 4. 생성된 보고서 확인
+# 3. 생성된 보고서 확인
 # reports/ 폴더에서 HTML 파일 확인
 ```
 
