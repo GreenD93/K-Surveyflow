@@ -2,6 +2,15 @@ import os
 from typing import Dict, List
 
 # =========================
+# langchain constants
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+
+USE_ASYNC_CLASSIFY = True  # 카테고리 분류 비동기 사용 여부
+USE_ASYNC_ENRICH = True  # 감성/키워드 비동기 사용 여부
+ASYNC_CONCURRENCY = 50  # 동시 실행 개수
+# =========================
+
+# =========================
 # 파일 경로 설정
 # =========================
 DATA_DIR = os.path.join(os.path.dirname(__file__), "data")  # 데이터 파일이 저장된 디렉토리

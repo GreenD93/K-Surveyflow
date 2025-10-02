@@ -53,7 +53,7 @@ def main():
 	# FRST_RGST_USER_ID                                        20160793
 	# FRST_RGST_DTTM                                         2025-09-26
 	# LAST_CHNG_USER_ID                                        20160793
-	# LAST_CHNG_DTTM                                         2025-09-26	
+	# LAST_CHNG_DTTM                                         2025-09-26
 
 	# step2: 해당 설문에 해당하는 원본 데이터 SURV_ID를 키로해서 가져오기
 	# TODO: step1에서 불러온 survey list에 해당하는 설문을 Athena 쿼리로 불러와서 데이터 맵핑하는 방향으로 변경해야 함.
@@ -108,7 +108,3 @@ def main():
 if __name__ == "__main__":
 	# CLI usage: python main.py --csv_file data/20250916_sample_data.csv
 	main()
-
-	
-
-	
