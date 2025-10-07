@@ -1,4 +1,4 @@
-from langchain import PromptTemplate
+from langchain_core.prompts import PromptTemplate
 from langchain_core.output_parsers import StrOutputParser
 
 import re
@@ -10,7 +10,7 @@ from src.core.state import GraphState
 from src.core.prompt import *
 from src.constants import *
 
-from langchain.chat_models import ChatOpenAI
+from langchain_openai import ChatOpenAI
 
 # =========================
 # LLM & Parser
@@ -19,8 +19,8 @@ from langchain.chat_models import ChatOpenAI
 llm = ChatOpenAI(
     model="gpt-4o",
     temperature=0,
-    model_kwargs={"top_p": 1},
-    openai_api_key=OPENAI_KEY
+    top_p=1,                     # ← 직접 인자
+    api_key=OPENAI_KEY,          # 또는 환경변수 OPENAI_API_KEY 사용
 )
 
 parser = StrOutputParser()
