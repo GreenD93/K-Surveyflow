@@ -1,4 +1,5 @@
 import os
+import pytz
 from datetime import datetime
 
 def html_escape(s: str) -> str:
@@ -35,3 +36,30 @@ def save_report(surv_id: str, main_ttl: str, html: str, out_dir: str = os.path.j
 	with open(path, "w", encoding="utf-8") as f:
 		f.write(html)
 	return path
+
+##########################################
+# time utilities
+
+TIME_ZONE = None
+TIME_FORMAT = "%Y-%m-%d %H:%M:%S"
+
+def _get_timezone():
+    global TIME_ZONE
+    if TIME_ZONE is None:
+        TIME_ZONE = pytz.timezone('Asia/Seoul')
+    return TIME_ZONE
+
+def get_current_time_string(format_string=TIME_FORMAT):
+    return datetime.now(_get_timezone()).strftime(format_string)
+
+# 입력 문자열(YYYY-MM-DD 또는 YYYY-MM-DD HH:MM:SS)을 서울 시간대로 파싱
+def _parse_input_datetime(dt_str: str) -> datetime:
+    tz = _get_timezone()
+    for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%d"):
+        try:
+            naive = datetime.strptime(dt_str, fmt)
+            return tz.localize(naive)
+        except ValueError:
+            continue
+    raise ValueError("지원하지 않는 날짜 형식입니다. 예) '2025-10-31' 또는 '2025-10-31 23:59:59'")
+##########################################

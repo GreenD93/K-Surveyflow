@@ -190,7 +190,7 @@ async def sentiment_and_keywords_async(state: GraphState):
     surv_answ = state.get('surv_answ', pd.DataFrame())
     base_results = state.get('batch_results', [])
 
-    sentiment_chain = r(
+    sentiment_chain = PromptTemplate(
         input_variables=["answer"],
         template=SENTIMENT_CLASSIFICATION_PROMPT
     ) | llm | parser
