@@ -66,6 +66,8 @@ def main():
         qsit_sqns = surv_answ['qsit_sqn'].unique()
         qsit_sqns = sorted(qsit_sqns)
 
+        #TODO: 주관식 문항인지에 대한 필터 필요 -> 객관식이면 langgraph 진행 할 필요 없음
+
         for qsit_sqn in qsit_sqns:
 
             # surv_id & qsit_sqn에 해당하는 설문 응답 가져오기
@@ -92,7 +94,7 @@ def main():
             
             result = run_langgraph(workflow, state)
 
-            # result -> category_level1, category_level2, sentiment, keywords, summary
+            # result -> category_level1, category_level2, sentiment, keywords
 
             survey_classify_mart = result.get('batch_results', [])
             df_cls = pd.DataFrame(
@@ -100,8 +102,10 @@ def main():
                 columns=['surv_date', 'surv_id', 'main_ttl', 'qsit_ttl', 'qsit_sqn', 'cust_id', 'answ_id', 'answ_cntnt', 'category_level1', 'category_level2', 'sentiment', 'keywords', 'summary']
             )
             df_cls["qsit_sqn"] = df_cls["qsit_sqn"].astype(int)
-
             df_cls.to_csv("result.csv", index=False)
+
+            # summary
+            
 
             break
 
