@@ -9,14 +9,7 @@ from src.load_data import load_data, load_category_map
 from src.langgraph_runner import define_workflow, run_langgraph
 from src.constants import *
 
-from src.utils import _get_timezone, _parse_input_datetime
-
-# 오늘(서울) 날짜가 종료일 '이전 또는 같은 날'이면 True
-def should_run_until(inclusive_end_str: str) -> bool:
-    now_kr = datetime.now(_get_timezone())
-    end_dt = _parse_input_datetime(inclusive_end_str)
-    # 요구사항대로 '일 단위'로 비교 (시각 무시)
-    return now_kr.date() <= end_dt.date()
+from src.utils import should_send_today
 
 def main():
 
@@ -52,21 +45,19 @@ def main():
 
     for item in items:
 
+        # check logic
+        if not should_send_today(item):
+            continue
+
         # 확인 : 발송여부, 발송주기코드.
         surv_id = item['SURV_ID']
-        sndg_yn = item['SNDG_YN'] # 발송 여부
-        sndg_end_dt = item['SNDG_END_DT'] # 종료 일자
-
-        # check logic
-        if not should_run_until(sndg_end_dt) and sndg_yn != "Y":
-            continue
 
         # surv_id에 해당하는 설문 응답 가져오기
         surv_answ = raw_df[raw_df['surv_id'] == surv_id]
         qsit_sqns = surv_answ['qsit_sqn'].unique()
         qsit_sqns = sorted(qsit_sqns)
 
-        #TODO: 주관식 문항인지에 대한 필터 필요 -> 객관식이면 langgraph 진행 할 필요 없음
+        # TODO: 주관식 문항인지에 대한 필터 필요 -> 객관식이면 langgraph 진행 할 필요 없음
 
         for qsit_sqn in qsit_sqns:
 
@@ -105,8 +96,6 @@ def main():
             df_cls.to_csv("result.csv", index=False)
 
             # summary
-            
-
             break
 
 if __name__ == "__main__":
