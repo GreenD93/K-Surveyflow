@@ -1,157 +1,105 @@
 import pandas as pd
 
 # ============================================================
-# 🧩 설문 정의
+# 🧩 [공통] 데이터 불러오기
 # ============================================================
+def load_data(filepath: str) -> pd.DataFrame:
+    """CSV 파일 불러오기 및 기본 전처리"""
+    df = pd.read_csv(filepath, sep=",", low_memory=False)
+    for col in ["main_ttl", "qsit_ttl", "category_level1", "category_level2", "sentiment", "summary", "keywords"]:
+        if col in df.columns:
+            df[col] = df[col].astype(str).str.strip()
+    return df
 
-main_ttl = '[홈개편] 홈탭 설문조사'
-qsit_ttl = '추가로 다른 의견이 있다면 알려주세요'
 
 # ============================================================
-# 🧩 [DATA1] 카테고리별 감정 요약 데이터 생성
+# 🧩 [DATA1] 카테고리별 감정 요약 생성
 # ============================================================
+def create_data1(df: pd.DataFrame, main_ttl: str, qsit_ttl: str) -> pd.DataFrame:
+    """카테고리별 감정요약 data1 생성"""
+    filtered = df[
+        (df["text_yn"] == 1) &
+        (df["main_ttl"] == main_ttl) &
+        (df["qsit_ttl"] == qsit_ttl) &
+        (~df["category_level2"].isin([
+            '단순 칭찬/불만', '욕설·무관한 피드백', '개선 의사 없음 (“없습니다”)'
+        ]))
+    ]
 
-# 1️⃣ 데이터 불러오기
-df = pd.read_csv("20251010_sample_data.csv", sep=",")
-
-# 2️⃣ 조건 필터링
-filtered = df[
-    (df["text_yn"] == 1) &
-    (df["main_ttl"] == main_ttl) &
-    (df["qsit_ttl"] == qsit_ttl) &
-    (~df["category_level2"].isin([
-        '단순 칭찬/불만', '욕설·무관한 피드백', '개선 의사 없음 (“없습니다”)'
-    ]))
-]
-
-# 3️⃣ 감정별 카운트 집계
-grouped = (
-    filtered
-    .groupby(["main_ttl", "qsit_ttl", "category_level1", "category_level2"], dropna=False)
-    .agg(
-        cnt=("sentiment", "count"),
-        positive=("sentiment", lambda x: (x == "긍정").sum()),
-        negative=("sentiment", lambda x: (x == "부정").sum()),
-        neutral=("sentiment", lambda x: (x == "중립").sum())
+    grouped = (
+        filtered
+        .groupby(["category_level1", "category_level2"], dropna=False)
+        .agg(
+            응답건수=("sentiment", "count"),
+            긍정건수=("sentiment", lambda x: (x == "긍정").sum()),
+            부정건수=("sentiment", lambda x: (x == "부정").sum()),
+            중립건수=("sentiment", lambda x: (x == "중립").sum())
+        )
+        .reset_index()
     )
-    .reset_index()
-)
 
-# 4️⃣ 카테고리별 랭킹 계산 (응답 건수 기준)
-grouped["no_1"] = (
-    grouped
-    .sort_values(["main_ttl", "qsit_ttl", "cnt"], ascending=[True, True, False])
-    .groupby(["main_ttl", "qsit_ttl"])
-    .cumcount() + 1
-)
+    grouped["카테고리"] = grouped["category_level1"].fillna('') + ">" + grouped["category_level2"].fillna('')
+    grouped = grouped.sort_values("응답건수", ascending=False).reset_index(drop=True)
+    grouped["rnk"] = grouped.index + 1
 
-# 5️⃣ 상위 10개 카테고리 추출
-data1 = (
-    grouped[grouped["no_1"] <= 10]
-    .sort_values(by="cnt", ascending=False)
-    .reset_index(drop=True)
-)
+    grouped["긍정비중"] = (grouped["긍정건수"] / grouped["응답건수"] * 100).round().astype(int).astype(str) + "%"
+    grouped["부정비중"] = (grouped["부정건수"] / grouped["응답건수"] * 100).round().astype(int).astype(str) + "%"
+    grouped["중립비중"] = (grouped["중립건수"] / grouped["응답건수"] * 100).round().astype(int).astype(str) + "%"
 
-# ============================================================
-# 🧩 [DATA2] 주요 키워드 및 감정별 요약 데이터 생성
-# ============================================================
+    data1 = grouped[[
+        "rnk", "카테고리", "응답건수", "긍정건수", "부정건수", "중립건수",
+        "긍정비중", "부정비중", "중립비중"
+    ]].head(10)
 
-# 6️⃣ 키워드 분리 (최대 3개)
-def split_keywords(k):
-    if pd.isna(k):
-        return []
-    parts = [p.strip() for p in str(k).split(",")]
-    return parts[:3]
+    return data1
 
-kw_rows = []
-for _, row in filtered.iterrows():
-    for kw in split_keywords(row["keywords"]):
-        if kw:
-            kw_rows.append([
-                row["main_ttl"], row["qsit_ttl"],
-                row["category_level1"], row["category_level2"],
-                row["sentiment"], kw
-            ])
-
-keywords_df = pd.DataFrame(kw_rows, columns=[
-    "main_ttl", "qsit_ttl", "category_level1", "category_level2", "sentiment", "keyword"
-])
-
-# 7️⃣ 키워드별 등장 횟수 계산
-kw_count = (
-    keywords_df
-    .groupby(["main_ttl","qsit_ttl","category_level1","category_level2","sentiment","keyword"])
-    .size()
-    .reset_index(name="cnt")
-)
-
-# 8️⃣ 감정별 상위 5개 키워드 추출
-kw_count["rank"] = (
-    kw_count
-    .sort_values(["main_ttl","qsit_ttl","category_level1","category_level2","sentiment","cnt"],
-                 ascending=[True,True,True,True,True,False])
-    .groupby(["main_ttl","qsit_ttl","category_level1","category_level2","sentiment"])
-    .cumcount() + 1
-)
-top_kw = kw_count[kw_count["rank"] <= 5]
-
-# 9️⃣ 키워드 문자열 생성 (예: "편리(10), 빠름(7), 오류(3)")
-def join_keywords(sub):
-    return ", ".join(f"{k}({c})" for k, c in zip(sub["keyword"], sub["cnt"]))
-
-kw_summary = (
-    top_kw.groupby(["main_ttl","qsit_ttl","category_level1","category_level2","sentiment"])
-    .apply(join_keywords)
-    .reset_index(name="keyword_anal")
-)
-
-# 🔟 원본 filtered 데이터와 병합
-result = filtered.merge(
-    kw_summary,
-    on=["main_ttl","qsit_ttl","category_level1","category_level2","sentiment"],
-    how="left"
-)
-
-# 11️⃣ 감정별 랭크 제한 (긍/부 3개, 중립 2개)
-result["rnk"] = (
-    result
-    .sort_values(["main_ttl","qsit_ttl","category_level1","category_level2","sentiment"])
-    .groupby(["main_ttl","qsit_ttl","category_level1","category_level2","sentiment"])
-    .cumcount() + 1
-)
-filtered_result = result[
-    ((result["sentiment"].isin(["긍정","부정"])) & (result["rnk"] <= 3)) |
-    ((result["sentiment"] == "중립") & (result["rnk"] <= 2))
-]
-
-# 12️⃣ 상위 10개 카테고리와 병합 (data2 완성)
-cat_count = (
-    filtered.groupby(["main_ttl","qsit_ttl","category_level1","category_level2"])
-    .size().reset_index(name="cnt")
-)
-cat_count["no_1"] = (
-    cat_count
-    .sort_values(["main_ttl","qsit_ttl","cnt"], ascending=[True,True,False])
-    .groupby(["main_ttl","qsit_ttl"])
-    .cumcount() + 1
-)
-top10 = cat_count[cat_count["no_1"] <= 10]
-
-data2 = filtered_result.merge(
-    top10,
-    on=["main_ttl","qsit_ttl","category_level1","category_level2"],
-    how="inner"
-)
 
 # ============================================================
-# 🧩 [HTML] 리포트 생성
+# 🧩 [DATA2] 감정별 요약 데이터 생성
 # ============================================================
+def create_data2(df: pd.DataFrame, main_ttl: str, qsit_ttl: str) -> pd.DataFrame:
+    """감정별 요약문 data2 생성"""
+    filtered = df[
+        (df["text_yn"] == 1) &
+        (df["main_ttl"] == main_ttl) &
+        (df["qsit_ttl"] == qsit_ttl) &
+        (~df["category_level2"].isin([
+            '단순 칭찬/불만', '욕설·무관한 피드백', '개선 의사 없음 (“없습니다”)'
+        ]))
+    ].copy()
 
-# 13️⃣ 기존 CSV 불러오기 (카테고리 요약 & 키워드 요약)
-data1 = pd.read_csv("survey_cat_anal.csv", sep="\t")
-data2 = pd.read_csv("survey_cat_summary.csv", sep="\t")
+    # 상위 10개 카테고리 선정
+    cat_rank = (
+        filtered.groupby(["category_level1", "category_level2"])
+        .size()
+        .reset_index(name="cnt")
+        .sort_values("cnt", ascending=False)
+    )
+    cat_rank["rnk_cat"] = cat_rank.index + 1
+    top10 = cat_rank.head(10)
 
-# 14️⃣ HTML 생성 함수
+    # 감정별 요약문 (긍/부 3개, 중립 2개)
+    max_rank = {"긍정": 3, "부정": 3, "중립": 2}
+    rows = []
+    for (lvl1, lvl2), subdf in filtered.groupby(["category_level1", "category_level2"]):
+        cat = f"{lvl1}>{lvl2}"
+        for sentiment, grp in subdf.groupby("sentiment"):
+            grp = grp.reset_index(drop=True)
+            for i, (_, row) in enumerate(grp.iterrows(), 1):
+                if i <= max_rank.get(sentiment, 2):
+                    rows.append([i, cat, sentiment, row.get("summary", "")])
+
+    data2 = pd.DataFrame(rows, columns=["rnk", "카테고리", "감정분석", "요약"])
+    data2 = data2[data2["카테고리"].isin(
+        top10["category_level1"].fillna('') + ">" + top10["category_level2"].fillna('')
+    )].reset_index(drop=True)
+    data2 = data2.sort_values(["카테고리", "감정분석", "rnk"]).reset_index(drop=True)
+    return data2
+
+
+# ============================================================
+# 🧩 [HTML 리포트 생성]
+# ============================================================
 def make_html_report(data1, data2):
     """카테고리별 감정분석 + 주요 키워드 HTML 리포트 (인라인 스타일 버전)"""
     html = """
@@ -231,9 +179,20 @@ def make_html_report(data1, data2):
 """
     return html
 
-# 16️⃣ HTML 저장
-html_report = make_html_report(data1, data2)
-with open(f"{main_ttl}_주관식분석.html", "w", encoding="utf-8") as f:
-    f.write(html_report)
+# ============================================================
+# 🧩 [실행부]
+# ============================================================
+if __name__ == "__main__":
+    main_ttl = "[홈개편] 홈탭 설문조사"
+    qsit_ttl = "추가로 다른 의견이 있다면 알려주세요"
 
-print(f"✅ {main_ttl}_주관식분석.html 생성 완료")
+    df = load_data("20251010_sample_data.csv")
+    data1 = create_data1(df, main_ttl, qsit_ttl)
+    data2 = create_data2(df, main_ttl, qsit_ttl)
+
+    html_report = make_html_report(data1, data2)
+    output_name = f"{main_ttl}_주관식분석.html"
+    with open(output_name, "w", encoding="utf-8") as f:
+        f.write(html_report)
+
+    print(f"✅ {output_name} 생성 완료")
