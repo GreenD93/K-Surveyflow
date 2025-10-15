@@ -1,4 +1,5 @@
 import pandas as pd
+import re
 
 # ============================================================
 # 🧩 [공통] 데이터 불러오기
@@ -50,7 +51,6 @@ def create_data1(df: pd.DataFrame, main_ttl: str, qsit_ttl: str) -> pd.DataFrame
         "rnk", "카테고리", "응답건수", "긍정건수", "부정건수", "중립건수",
         "긍정비중", "부정비중", "중립비중"
     ]].head(10)
-
     return data1
 
 
@@ -58,7 +58,7 @@ def create_data1(df: pd.DataFrame, main_ttl: str, qsit_ttl: str) -> pd.DataFrame
 # 🧩 [DATA2] 감정별 요약 데이터 생성
 # ============================================================
 def create_data2(df: pd.DataFrame, main_ttl: str, qsit_ttl: str) -> pd.DataFrame:
-    """감정별 요약문 data2 생성"""
+    """감정별 요약문 + 키워드분석 + keyword_hit_cnt 기반 랭킹"""
     filtered = df[
         (df["text_yn"] == 1) &
         (df["main_ttl"] == main_ttl) &
@@ -68,7 +68,9 @@ def create_data2(df: pd.DataFrame, main_ttl: str, qsit_ttl: str) -> pd.DataFrame
         ]))
     ].copy()
 
-    # 상위 10개 카테고리 선정
+    # ============================================================
+    # 🧩 ① 상위 10개 카테고리 선정
+    # ============================================================
     cat_rank = (
         filtered.groupby(["category_level1", "category_level2"])
         .size()
@@ -77,26 +79,108 @@ def create_data2(df: pd.DataFrame, main_ttl: str, qsit_ttl: str) -> pd.DataFrame
     )
     cat_rank["rnk_cat"] = cat_rank.index + 1
     top10 = cat_rank.head(10)
+    top10["카테고리"] = top10["category_level1"].fillna('') + ">" + top10["category_level2"].fillna('')
 
-    # 감정별 요약문 (긍/부 3개, 중립 2개)
-    max_rank = {"긍정": 3, "부정": 3, "중립": 2}
-    rows = []
-    for (lvl1, lvl2), subdf in filtered.groupby(["category_level1", "category_level2"]):
-        cat = f"{lvl1}>{lvl2}"
-        for sentiment, grp in subdf.groupby("sentiment"):
-            grp = grp.reset_index(drop=True)
-            for i, (_, row) in enumerate(grp.iterrows(), 1):
-                if i <= max_rank.get(sentiment, 2):
-                    rows.append([i, cat, sentiment, row.get("summary", "")])
+    # ============================================================
+    # 🧩 ② 키워드 분리 및 집계
+    # ============================================================
+    def split_keywords(k):
+        if pd.isna(k): 
+            return []
+        return [p.strip() for p in str(k).split(",") if p.strip()][:3]
 
-    data2 = pd.DataFrame(rows, columns=["rnk", "카테고리", "감정분석", "요약"])
-    data2 = data2[data2["카테고리"].isin(
-        top10["category_level1"].fillna('') + ">" + top10["category_level2"].fillna('')
-    )].reset_index(drop=True)
-    data2 = data2.sort_values(["카테고리", "감정분석", "rnk"]).reset_index(drop=True)
+    kw_rows = []
+    for _, row in filtered.iterrows():
+        for kw in split_keywords(row["keywords"]):
+            kw_rows.append([
+                row["category_level1"], row["category_level2"],
+                row["sentiment"], kw
+            ])
+
+    kw_count = (
+        pd.DataFrame(kw_rows, columns=["category_level1","category_level2","sentiment","keyword"])
+        .groupby(["category_level1","category_level2","sentiment","keyword"])
+        .size()
+        .reset_index(name="cnt")
+    )
+
+    # 감정별 상위 5개 키워드
+    kw_count = (
+        kw_count.sort_values(["category_level1","category_level2","sentiment","cnt"], ascending=[True,True,True,False])
+        .groupby(["category_level1","category_level2","sentiment"])
+        .head(5)
+        .reset_index(drop=True)
+    )
+
+    # keyword_anal 문자열 (빈도 내림차순)
+    kw_anal = (
+        kw_count
+        .sort_values(["category_level1","category_level2","sentiment","cnt"], ascending=[True,True,True,False])
+        .groupby(["category_level1","category_level2","sentiment"])
+        .apply(lambda x: ", ".join(f"{k}({c})" for k, c in zip(x["keyword"], x["cnt"])))
+        .reset_index(name="keyword_anal")
+    )
+
+    # ✅ (추가 ①) 동일 카테고리·감정 조합 중복 제거
+    kw_anal = kw_anal.drop_duplicates(subset=["category_level1","category_level2","sentiment"])
+
+    # ============================================================
+    # 🧩 ③ 요약문 + 원문 + keyword_anal 병합
+    # ============================================================
+    data = filtered.copy()
+    data["카테고리"] = data["category_level1"].fillna('') + ">" + data["category_level2"].fillna('')
+    kw_anal["카테고리"] = kw_anal["category_level1"].fillna('') + ">" + kw_anal["category_level2"].fillna('')
+
+    data = data.merge(
+        kw_anal[["카테고리","sentiment","keyword_anal"]],
+        on=["카테고리","sentiment"], how="left"
+    )
+
+    data = data.drop_duplicates(subset=["카테고리","sentiment","summary","answ_cntnt"])
+
+    # ============================================================
+    # 🧩 ④ keyword_hit_cnt 계산
+    # ============================================================
+    def count_keyword_hits(row):
+        if pd.isna(row["answ_cntnt"]) or pd.isna(row["keyword_anal"]):
+            return 0
+        keywords = [re.sub(r"\(.*\)", "", k.strip()) for k in row["keyword_anal"].split(",")]
+        text = str(row["answ_cntnt"])
+        return sum(1 for k in keywords if k and k in text)
+
+    data["keyword_hit_cnt"] = data.apply(count_keyword_hits, axis=1)
+    data["문장길이"] = data["summary"].fillna("").apply(len)
+
+    # ============================================================
+    # 🧩 ⑤ 감정별 랭킹 계산
+    # ============================================================
+    data["rnk"] = (
+        data.sort_values(["카테고리","sentiment","keyword_hit_cnt","문장길이"], ascending=[True,True,False,False])
+        .groupby(["카테고리","sentiment"])
+        .cumcount() + 1
+    )
+
+    # 감정별 상위 제한 (긍/부 3, 중립 2)
+    data = data[
+        ((data["sentiment"].isin(["긍정","부정"])) & (data["rnk"] <= 3)) |
+        ((data["sentiment"] == "중립") & (data["rnk"] <= 2))
+    ].copy()
+
+    # ============================================================
+    # 🧩 ⑥ 최종 정리
+    # ============================================================
+    data2 = data[
+        ["rnk","카테고리","sentiment","summary","keyword_anal","answ_cntnt","keyword_hit_cnt"]
+    ].rename(columns={
+        "sentiment":"감정분석",
+        "summary":"요약"
+    })
+
+    data2 = data2[data2["카테고리"].isin(top10["카테고리"])].reset_index(drop=True)
+    data2 = data2.sort_values(["카테고리","감정분석","rnk"]).reset_index(drop=True)
+    
     return data2
-
-
+    
 # ============================================================
 # 🧩 [HTML 리포트 생성]
 # ============================================================
