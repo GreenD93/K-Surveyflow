@@ -1,0 +1,150 @@
+import pandas as pd
+
+# 1️⃣ CSV 읽기
+df = pd.read_csv('20251023_sample_data.csv', sep=',', low_memory=False)
+
+# 2️⃣ 평가형 문항만 추출
+filtered = df[df['qsit_type_ds_cd'] == 30].copy()
+
+# 3️⃣ 응답 항목별 건수 및 비율 계산
+summary = (
+    filtered
+    .groupby(['answ_cntnt', 'LBL_TXT'], dropna=False)
+    .size()
+    .reset_index(name='건수')
+    .sort_values(by='answ_cntnt')
+    .reset_index(drop=True)
+)
+total = summary['건수'].sum()
+summary['비율(%)'] = (summary['건수'] / total * 100).round(1)
+
+
+# 4️⃣ 가변 화살표 로직 (중복 제거, 병합, 항목 수 자동 인식)
+def process_labels(summary):
+    n = len(summary)
+    labels = summary["LBL_TXT"].fillna("").astype(str).str.strip().tolist()
+    processed = []
+
+    # ① 기본 방향(↑, ↓) 자동 배정
+    for i, lbl in enumerate(labels):
+        if lbl != "":
+            processed.append(lbl)
+        else:
+            if i == 0:
+                processed.append("↑")
+            elif i == n - 1:
+                processed.append("↓")
+            elif i < n / 2:
+                processed.append("↑")
+            else:
+                processed.append("↓")
+
+    # ② 연속된 빈칸 병합 → 중간에 "↑↓"로 표시 (중복 방지)
+    merged = []
+    skip_next = False
+    for i in range(n):
+        if skip_next:
+            skip_next = False
+            continue
+        if (
+            i < n - 1
+            and processed[i] in ["↑", "↓"]
+            and processed[i + 1] in ["↑", "↓"]
+            and processed[i] != processed[i + 1]
+        ):
+            merged.append("↑↓")
+            skip_next = True
+        else:
+            merged.append(processed[i])
+    # 길이 맞추기
+    if len(merged) < n:
+        merged += [""] * (n - len(merged))
+    return merged[:n]
+
+
+# 5️⃣ HTML 리포트 생성
+def make_html_report(summary):
+    labels = process_labels(summary)
+
+    html = """
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<title>평가형 설문 리포트</title>
+</head>
+<body style="font-family:-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,'Noto Sans KR',sans-serif;
+             color:#111827;font-size:13px;margin:0;padding:40px;background:#F9FAFB;">
+
+<!-- 전체 감싸는 틀 -->
+<div style="max-width:950px;margin:0 auto;padding:40px;background:white;
+            border:1px solid #E5E7EB;border-radius:8px;">
+
+<!-- 제목 -->
+<h2 style="font-size:18px;font-weight:700;margin-bottom:4px;">1번 문항 · 평가형</h2>
+<p style="margin:0 0 20px 0;color:#6B7280;">문항 제목: 평가형 데이터를 쌓아주세요</p>
+
+<h3 style="font-size:14px;font-weight:700;margin:12px 0 8px 0;">응답 통계</h3>
+
+<!-- 그래프 + LEGEND -->
+<div style="display:flex;justify-content:center;align-items:flex-start;gap:60px;margin-bottom:16px;">
+
+  <!-- 그래프 -->
+  <div style="flex:1;text-align:center;">
+    <div style="display:flex;justify-content:center;align-items:center;
+                max-width:600px;margin:0 auto;height:40px;border-radius:8px;overflow:hidden;">
+"""
+    # 색상 팔레트
+    colors = ["#001F54", "#003F88", "#0056B3", "#0074CC", "#3D8AE8", "#74B3F4", "#BFD9FA"]
+
+    for i, row in summary.iterrows():
+        width = f"{row['비율(%)']}%"
+        color = colors[i % len(colors)]
+        value = f"{row['비율(%)']}%"
+        html += f"""
+      <div style="width:{width};background:{color};display:flex;align-items:center;
+                  justify-content:center;color:white;font-size:11px;">{value}</div>
+"""
+    html += """
+    </div>
+    <div style="display:flex;justify-content:space-between;margin-top:6px;
+                max-width:600px;margin-left:auto;margin-right:auto;">
+      <span style="font-size:12px;color:#DC2626;">매우 불만족</span>
+      <span style="font-size:12px;color:#1E40AF;">매우 만족</span>
+    </div>
+  </div>
+
+  <!-- LEGEND -->
+  <div style="width:300px;text-align:left;">
+    <h4 style="font-size:12px;font-weight:700;color:#374151;margin:0 0 8px 0;">LEGEND</h4>
+"""
+    for i, row in summary.iterrows():
+        color = colors[i % len(colors)]
+        label = labels[i]
+        text_color = "#DC2626" if i == 0 else "#1E40AF" if i == len(summary)-1 else "#111827"
+
+        html += f"""
+    <div style="display:flex;align-items:center;margin-bottom:4px;">
+      <div style="width:14px;height:14px;background:{color};margin-right:6px;border-radius:2px;"></div>
+      <span style="font-size:12px;color:#111827;width:20px;">{i+1}</span>
+      <span style="font-size:12px;color:{text_color};flex:1;">{label}</span>
+      <span style="font-size:12px;color:#6B7280;">{int(row['건수'])}건, {row['비율(%)']}%</span>
+    </div>
+"""
+    html += """
+  </div>
+</div>
+
+</div> <!-- 틀 끝 -->
+</body>
+</html>
+"""
+    return html
+
+
+# 6️⃣ HTML 저장
+html_report = make_html_report(summary)
+with open('rating_report_final_boxed.html', 'w', encoding='utf-8') as f:
+    f.write(html_report)
+
+print("✅ rating_report_final_boxed.html 생성 완료 (흰색 배경 + 회색 틀 + 화살표 중복 제거)")
