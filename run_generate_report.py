@@ -50,19 +50,22 @@ def main(argv: Optional[List[str]] = None) -> int:
 						"surv_date":str,
 						"keywords":str
 					},
-					encoding=enc).fillna("")
+					encoding=enc)
+	
+	df["main_ttl"] = df["main_ttl"].fillna("기본").astype(str).str.strip()
 
 	# 문자열 컬럼 좌우 공백 제거
 	df = df.applymap(lambda x: x.strip() if isinstance(x, str) else x)
-	df["main_ttl"] = df["main_ttl"].fillna("기본").astype(str).str.strip()
+	df = df.fillna("")
 	
 	# main_ttl별 그룹화
-	grouped = df.groupby("main_ttl")
+	grouped = df.groupby("surv_id")
 	generated_reports = []
 
-	for idx, (main_ttl, group_df) in enumerate(grouped, 1):
-		surv_id = group_df['surv_id'].iloc[0]
-		print(f"[INFO] '{main_ttl}' 보고서 생성 중... (데이터 {len(group_df)}건)")
+	for idx, (surv_id, group_df) in enumerate(grouped, 1):
+
+		main_ttl = group_df['main_ttl'].iloc[0]
+		print(f"[INFO] '{surv_id}' 보고서 생성 중... (데이터 {len(group_df)}건)")
 
 		# DataFrame을 그대로 HTML 변환하거나 기존 함수 활용
 		html = generate_html(group_df.to_dict(orient="records"))
