@@ -3,7 +3,8 @@ from typing import Dict, List
 
 # =========================
 # langchain constants
-OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+OPENAI_KEY = ""
+#os.getenv("OPENAI_API_KEY")
 
 USE_ASYNC_CLASSIFY = True  # 카테고리 분류 비동기 사용 여부
 USE_ASYNC_ENRICH = True  # 감성/키워드 비동기 사용 여부
@@ -34,7 +35,7 @@ COMPONENT_TYPES = {
     "evaluation_heatmap": "평가형 히트맵",                               # 평가형 전용 히트맵 (순만족도 포함, 히트맵만)
     "evaluation_heatmap_with_cross_analysis": "평가형 히트맵+교차분석",   # 평가형 히트맵 + 교차분석 엣지케이스
     "ranking_stats": "순위형 응답통계",                                  # 순위별 응답 통계
-    "ranking_chart": "순위형 차트",                                     # 순위 시각화 차트
+    "ranking_heatmap": "순위형 히트맵",                                 # 순위형 히트맵
     "subjective_summary": "주관식 요약",                                # 키워드 분석 및 요약
 }
 
@@ -44,10 +45,10 @@ QUESTION_TYPE_COMPONENTS: Dict[str, List[str]] = {
     "evaluation": ["general_stats", "evaluation_heatmap_with_cross_analysis"],       # 평가형: 일반형 응답통계 + 평가형 히트맵+교차분석
     "card": ["general_stats", "general_heatmap_with_cross_analysis"],                # 카드형: 일반형 응답통계 + 일반형 히트맵+교차분석
     "binary": ["general_stats", "general_heatmap_with_cross_analysis"],              # 이분형: 일반형 응답통계 + 일반형 히트맵+교차분석
-    "ranking": ["ranking_stats", "ranking_chart"],               # 순위형: 순위형 응답통계 + 순위형 차트
-    "subjective": ["subjective_summary"],                        # 주관식: 주관식 요약
     "content": ["general_stats", "general_heatmap_with_cross_analysis"],             # 콘텐츠형: 일반형 응답통계 + 일반형 히트맵+교차분석
     "list": ["general_stats", "general_heatmap_with_cross_analysis"],                # 목록형: 일반형 응답통계 + 일반형 히트맵+교차분석
+    "ranking": ["ranking_stats", "ranking_heatmap"],               # 순위형: 순위형 응답통계 + 순위형 히트맵
+    "subjective": ["subjective_summary"],                        # 주관식: 주관식 요약
 }
 
 # =========================
@@ -60,11 +61,20 @@ EVAL_LABELS = ["매우 만족해요", "만족해요", "보통이에요", "불만
 EVALUATION_TRIGGERS: List[str] = ["만족", "그렇다"]
 
 
-#4C0101
-#910304
-#AD0001
-#CB1F1A
-#F55142
+# 빨간색 팔레트 (11단계, 밝은 빨강부터 진한 빨강 순)
+CONTRAST_PALETTE = [
+	"#FEF2F2",  # 0% - 가장 밝은 빨강 (엣지케이스 기본 색상)
+	"#FEE2E2",  # 10%
+	"#FECACA",  # 20%
+	"#FCA5A5",  # 30%
+	"#F87171",  # 40%
+	"#F55142",  # 50%
+	"#F55142",  # 60% - 기존 가장 밝은 빨강
+	"#CB1F1A",  # 70% - 기존 75%
+	"#AD0001",  # 80% - 기존 50%
+	"#910304",  # 90% - 기존 25%
+	"#4C0101",  # 100% - 기존 가장 진한 빨강
+]
 
 
 # =========================
@@ -86,9 +96,9 @@ PRIMARY_PALETTE = [
 
 ]
 
-# 대비 색상 (레드 계열, 11단계, 0%~100%, 밝은 레드부터 진한 레드 순)
+# 히트맵 색상 (11단계, 0%~100%, 밝은 색부터 진한 색 순)
 # #EF4444를 80% 색으로 하는 팔레트
-CONTRAST_PALETTE = [
+HEATMAP_PALETTE = [
 	"#CEF8E0",  # 0% - 가장 밝은 색
 	"#ADF4CE",  # 10%
 	"#89ECBC",  # 20%
@@ -155,6 +165,55 @@ COLOR_CONFIG = {
     }
 }
 
+# 순위형 가중치 환경변수
+RANKING_WEIGHTS_ENABLED = True
+RANKING_WEIGHTS = {
+	"heatmap": {
+		1:  [1],
+		2:  [2, 1],
+		3:  [3, 2, 1],
+		4:  [4, 3, 2, 1],
+		5:  [5, 4, 3, 2, 1],
+		6:  [6, 5, 4, 3, 2, 1],
+		7:  [7, 6, 5, 4, 3, 2, 1],
+		8:  [8, 7, 6, 5, 4, 3, 2, 1],
+		9:  [9, 8, 7, 6, 5, 4, 3, 2, 1],
+		10: [10, 9, 8, 7, 6, 5, 4, 3, 2, 1],
+	},
+	# stats 가중치 세분화: 1~10개 선택 케이스 모두 정의
+	# 1+2순위: 선택 개수에 따라 [2], [2,1], 이후는 항상 [2,1]
+	"stats_1or2": {
+		1:  [2],
+		2:  [2, 1],
+		3:  [2, 1],
+		4:  [2, 1],
+		5:  [2, 1],
+		6:  [2, 1],
+		7:  [2, 1],
+		8:  [2, 1],
+		9:  [2, 1],
+		10: [2, 1],
+	},
+	# 1+2+3순위: 선택 개수에 따라 [3], [3,2], [3,2,1], 이후는 항상 [3,2,1]
+	"stats_1or2or3": {
+		1:  [3],
+		2:  [3, 2],
+		3:  [3, 2, 1],
+		4:  [3, 2, 1],
+		5:  [3, 2, 1],
+		6:  [3, 2, 1],
+		7:  [3, 2, 1],
+		8:  [3, 2, 1],
+		9:  [3, 2, 1],
+		10: [3, 2, 1],
+	},
+}
+
+# 응답자 단위 정규화 옵션 (on/off)
+# True: 한 응답자의 (1+2) 혹은 (1+2+3) 가중치 합이 항상 1이 되도록 정규화
+# False: 고정 가중치(2,1 / 3,2,1)를 그대로 사용
+RANKING_NORMALIZE_PER_RESPONDENT = True
+
 # =========================
 # 히트맵 색상 변환 설정
 # =========================
@@ -162,6 +221,19 @@ COLOR_CONFIG = {
 HEATMAP_GAMMA = 1.0  # 감마 보정 (1.0 = 선형, >1.0 = 어두운 부분 강조)
 HEATMAP_ALPHA = 0.7  # 끝단 강조 강도 (0<alpha<1: 저/고값 대비 강화)
 HEATMAP_MIDRANGE_GAIN = 1.40  # 중간 구간 대비 증폭 (20~60% 구간 차이 확대)
+
+# 그래프 내부 텍스트 최소 폭 임계값(px)
+GRAPH_INTERNAL_TEXT_MIN_PX = 24  # px
+
+# 응답통계 차트 레이아웃 추정치 (막대 px 계산용)
+GENERAL_STATS_CHART_LEFT_COL_PCT = 0.60  # 좌측 차트 영역 가로 비율 (layout_html 기준 60%)
+GENERAL_STATS_CHART_LEFT_PADDING_PX = 8  # 좌측 차트 셀 내부 left padding (layout_html)
+
+# 아래 스택 라벨(외부 라벨) 렌더링 규격
+GRAPH_EXTERNAL_LABEL_ROW_HEIGHT_PX = 8
+GRAPH_EXTERNAL_LABEL_ROW_GAP_PX = 4
+GRAPH_GUIDELINE_COLOR = "#9CA3AF"
+GRAPH_GUIDELINE_STYLE = "0.5px dashed"
 
 # =========================
 # 그레이스케일 적용 임계값
@@ -190,14 +262,16 @@ GRAYSCALE_PALETTE = [
 # =========================
 # 교차분석 설정
 # =========================
-# 교차분석 최대 차원 (2차원, 3차원 등)
-CROSS_ANALYSIS_MAX_DIMENSIONS = 2  # 2차원과 3차원 교차분석 수행
+# 교차분석 최대 차원 (예: 2 → 2차원 조합까지)
+# 현재 설정값 2: 2차원 교차만 수행 (3차원은 수행하지 않음)
+CROSS_ANALYSIS_MAX_DIMENSIONS = 2
 
 # 교차분석 차이 임계값 (전체 대비 차이 %p)
-CROSS_ANALYSIS_DIFFERENCE_THRESHOLD = 10.0  # 0.001%p 이상 차이날 때만 엣지케이스로 분류
+CROSS_ANALYSIS_DIFFERENCE_THRESHOLD = 10.0  # 10%p 이상 차이날 때만 엣지케이스로 분류
 
 # 평가형 교차분석 차이 임계값 (전체 평균 점수 대비 차이 %)
-EVALUATION_CROSS_ANALYSIS_DIFFERENCE_THRESHOLD = 5.0  # 5% 이상 차이날 때만 엣지케이스로 분류
+# 주석 보정: 실제 값은 10.0%p 이며, 10%p 이상 차이 시 엣지케이스로 분류
+EVALUATION_CROSS_ANALYSIS_DIFFERENCE_THRESHOLD = 10.0
 
 # 교차분석 최소 응답 수 (신뢰성 확보)
 CROSS_ANALYSIS_MIN_RESPONSES = 20  # 최소 20건 이상 응답이 있을 때만 분석
@@ -205,20 +279,31 @@ CROSS_ANALYSIS_MIN_RESPONSES = 20  # 최소 20건 이상 응답이 있을 때만
 # 엣지케이스 표에서 각 셀당 최대 표시 개수
 CROSS_ANALYSIS_MAX_CASES_PER_CELL = 3  # 각 셀당 최대 3개 엣지케이스 표시
 
+# 평균대비 gap 상위 노출 개수 (교차분석 표 전체 상위 N개)
+CROSS_ANALYSIS_TOP_K = 5
+
 
 # =========================
 # 주관식 분석 표시 설정
 # =========================
-# '기타' 카테고리로 묶을 임계값 (건수 또는 비율 중 하나라도 해당되면 '기타'로 분류)
-SUBJECTIVE_OTHER_THRESHOLD = 0  # 20건 이하인 카테고리를 '기타'로 묶음
-SUBJECTIVE_OTHER_PERCENT_THRESHOLD = 0.0  # 1% 이하인 카테고리를 '기타'로 묶음
-
 # 응답 내용 길이 기준 (이 길이 미만이면 분석에서 제외)
 MIN_RESPONSE_LENGTH = 5  # 5글자 미만인 응답은 분석에서 제외
+# 노출 카테고리 최대 개수 설정
+SUBJECTIVE_MAX_CATEGORIES = 10  # 주관식 요약 상위 카테고리 개수
+OBJECTIVE_OTHER_MAX_CATEGORIES = 5  # 객관식 기타 응답 요약 상위 카테고리 개수
+# 주관식 막대 색상/스타일 (PoC 전용)
+SUBJECTIVE_POS_BAR_COLOR = "#4262FF"
+SUBJECTIVE_NEG_BAR_COLOR = "#F55142"
+SUBJECTIVE_NEU_BAR_COLOR = "#8694B1"
+SUBJECTIVE_BAR_BG_COLOR = "#E0E6F1"
+SUBJECTIVE_BAR_HEIGHT_PX = 16
 
-# 키워드 표시 개수 제한
-SUBJECTIVE_KEYWORDS_LIMIT = 5  # 일반 카테고리에서 표시할 키워드 개수
-SUBJECTIVE_KEYWORDS_LIMIT_OTHER = 10  # '기타' 카테고리에서 표시할 키워드 개수
+
+# 주관식/기타 응답 기타 묶기 임계치 및 키워드 노출 개수 (사용처 존재)
+SUBJECTIVE_OTHER_THRESHOLD = 0
+SUBJECTIVE_OTHER_PERCENT_THRESHOLD = 0.0
+SUBJECTIVE_KEYWORDS_LIMIT = 5
+SUBJECTIVE_KEYWORDS_LIMIT_OTHER = 10
 
 
 # # =========================
@@ -270,3 +355,87 @@ SUBJECTIVE_EXCLUDE_KEYWORDS = {
     "않아요", "합니다", "있으면", "좋겠어요", "감사합니다", "매우만족합니다", 
     "Best", "은행", "없음", "안돼나요", "더", "매우만족"
 }
+
+# 순만족도 전용 색상 팔레트 (주황색 계열)
+SUN_EVALUATION_SHADES = [
+	"#FFF7ED",  # 0% - 매우 밝은 주황
+	"#FFEDD5",  # 10%
+	"#FED7AA",  # 20%
+	"#FDBA74",  # 30%
+	"#FB923C",  # 40%
+	"#F97316",  # 50%
+	"#EA580C",  # 60%
+	"#DC2626",  # 70%
+	"#B91C1C",  # 80%
+	"#991B1B",  # 90%
+	"#7F1D1D",  # 100% - 매우 진한 빨강
+]
+
+# 원숫자(동그라미 숫자) 매핑: 1~10
+CIRCLED_NUMS = ['①','②','③','④','⑤','⑥','⑦','⑧','⑨','⑩']
+
+def get_segment_display_value(seg: str, value: str) -> str:
+	"""
+	세그먼트와 값을 받아서 사용자 친화적인 표시값을 반환합니다.
+	원본 값으로 먼저 매핑을 시도하고, 실패하면 원본 값을 그대로 반환합니다.
+	"""
+	# 세그먼트별 매핑 딕셔너리
+	mapping = {
+		"gndr_seg": {
+			"01.남성": "남성", 
+			"02.여성": "여성"
+		},
+		"account_seg": {
+			"01.계좌": "계좌고객", 
+			"02.비계좌": "비계좌고객"
+		},
+		"age_seg": {
+			"01.10대": "10대", 
+			"02.20대": "20대", 
+			"03.30대": "30대", 
+			"04.40대": "40대", 
+			"05.50대": "50대", 
+			"06.60대": "60대"
+		},
+		"rgst_gap": {
+			"01.3개월미만": "가입 3개월미만 경과", 
+			"02.6개월미만": "가입 6개월미만 경과", 
+			"03.1년미만": "가입 1년미만 경과", 
+			"04.2년미만": "가입 2년미만 경과", 
+			"05.2년 이상": "가입 2년이상 경과"
+		},
+		"vasp": {
+			"미연결": "VASP 미연결", 
+			"연결": "VASP 연결"
+		},
+		"dp_seg": {
+			"02.1~3개": "수신상품 1~3개 가입", 
+			"03.4~5개": "수신상품 4~5개 가입", 
+			"04.6개 이상": "수신상품 6개 이상 가입",
+			"05.미보유": "수신상품 미보유"
+		},
+		"loan_seg": {
+			"01.사장님담보": "사장님담보대출 가입", 
+			"02.사장님": "사장님대출 가입", 
+			"03.담보전세": "담보·전세대출 가입", 
+			"04.신용": "신용대출 가입", 
+			"05.미보유": "대출 미보유"
+		},
+		"card_seg": {
+			"02.체크": "체크카드 가입", 
+			"03.신용": "신용카드 가입",
+			"04.체크신용": "체크&신용카드 가입", 
+			"05.미보유": "카드 미보유"
+		},
+		"suv_seg": {
+			"01.미이용": "서비스 미이용", 
+			"02.1~3개": "서비스 1~3개 이용", 
+			"02.4개 이상": "서비스 4개 이상 이용"
+		}
+	}
+	
+	# 해당 세그먼트의 매핑이 있으면 사용, 없으면 원본 값 반환
+	if seg in mapping:
+		return mapping[seg].get(value, value)
+	else:
+		return value

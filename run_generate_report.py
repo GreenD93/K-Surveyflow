@@ -4,51 +4,76 @@ import pandas as pd
 
 import argparse
 
-from src.load_data import load_data
 from src.constants import *
 from src.report_generator import *
 from src.utils import save_report
 
-def main():
+def main(argv: Optional[List[str]] = None) -> int:
 
-	parser = argparse.ArgumentParser()
-	parser.add_argument("--csv_file", default="data/20250916_sample_data.csv")
-	args = parser.parse_args()
+	parser = argparse.ArgumentParser(
+		description="CSV 기반 HTML 보고서 생성기",
+		formatter_class=argparse.ArgumentDefaultsHelpFormatter
+	)
+	parser.add_argument(
+		"--csv",
+		dest="csv_path",
+		type=str,
+		default="data/20251023_sample_data.csv",
+		help="CSV 파일 경로 (지정하지 않으면 data 폴더 내 최신 CSV 사용)"
+	)
+	parser.add_argument(
+		"--normalize-stats-weights",
+		dest="normalize",
+		choices=["on", "off"],
+		default="off",
+		help="응답자 단위 정규화 설정 (on/off)"
+	)
 
-	csv_path: Optional[str] = args.csv_file
+	args = parser.parse_args(argv)
+
+	# 전역 설정 적용
+	global RANKING_NORMALIZE_PER_RESPONDENT
+	RANKING_NORMALIZE_PER_RESPONDENT = (args.normalize.lower() == "on")
+
+	csv_path: Optional[str] = args.csv_path
 	
 	if not csv_path or not os.path.exists(csv_path):
 		print("[ERROR] CSV 파일을 찾을 수 없습니다.")
 		return 1
 	
-	df = pd.read_csv(csv_path,
-					 dtype={
+	enc = detect_encoding(csv_path)
+	df = pd.read_csv(csv_path, 
+					dtype={
 						"surv_id": str,
 						"qsit_type_ds_cd":str,
 						"text_yn":str,
 						"surv_date":str,
 						"keywords":str
-					 }).fillna("")
+					},
+					encoding=enc).fillna("")
+
+	# 문자열 컬럼 좌우 공백 제거
+	df = df.applymap(lambda x: x.strip() if isinstance(x, str) else x)
+	df["main_ttl"] = df["main_ttl"].fillna("기본").astype(str).str.strip()
 	
-	surv_ids = df['surv_id'].unique().tolist()
+	# main_ttl별 그룹화
+	grouped = df.groupby("main_ttl")
+	generated_reports = []
 
-	for idx, surv_id in enumerate(surv_ids):
+	for idx, (main_ttl, group_df) in enumerate(grouped, 1):
+		surv_id = group_df['surv_id'].iloc[0]
+		print(f"[INFO] '{main_ttl}' 보고서 생성 중... (데이터 {len(group_df)}건)")
 
-		surv_df = df[df['surv_id'] == surv_id]
-		main_ttl = surv_df['main_ttl'].iloc[0]
-		rows = surv_df.to_dict(orient="records")
-
-		if not rows:
-			print(f"[ERROR] {main_ttl} 데이터가 없습니다.")
-			continue
-
-		print(f"[INFO] {idx+1} of {len(surv_ids)}보고서 생성 중...")
-		print(f"[INFO] {surv_id} - '{main_ttl}' - (데이터 {len(rows)}건) ")
-
-		html = generate_html(rows)
+		# DataFrame을 그대로 HTML 변환하거나 기존 함수 활용
+		html = generate_html(group_df.to_dict(orient="records"))
 		out_path = save_report(surv_id, main_ttl, html, out_dir=os.path.join(os.path.dirname(__file__), "reports"))
-		print(f"[OK] '{main_ttl}' 보고서 생성 완료: {out_path}")
-		print(f"  - {out_path}")
+		generated_reports.append(out_path)
+
+
+	print(f"[COMPLETE] 총 {len(generated_reports)}개 보고서 생성 완료")
+	print(f"[INFO] normalize-stats-weights={'on' if RANKING_NORMALIZE_PER_RESPONDENT else 'off'}")
+	for report_path in generated_reports:
+		print(f"  - {report_path}")
 		
 if __name__ == "__main__":
 	# CLI usage: python main.py --csv_file data/20250916_sample_data.csv --survey_info_file data/isb_surv_rpt_info.csv

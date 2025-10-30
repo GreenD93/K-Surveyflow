@@ -25,14 +25,23 @@ def detect_encoding(file_path: str) -> str:
 	return "utf-8"
 
 def save_report(surv_id: str, main_ttl: str, html: str, out_dir: str = os.path.join(os.path.dirname(__file__), "reports")) -> str:
-	os.makedirs(out_dir, exist_ok=True)
-	date_str = datetime.now().strftime("%Y%m%d")
-	# 새로운 파일명 형식: survey_report_(SURV_ID)_(TITLE)_(YYYYMMDD).html
-	filename = f"survey_report_{surv_id}_{main_ttl}_{date_str}.html"
-	path = os.path.join(out_dir, filename)
-	with open(path, "w", encoding="utf-8") as f:
-		f.write(html)
-	return path
+    """설문 보고서를 HTML 파일로 저장하고 경로를 반환.
+
+    파일명 형식: `survey_report_{SURV_ID}_{TITLE}_{YYYYMMDD}.html`
+    - SURV_ID: 설문 ID
+    - TITLE: 메인 제목
+    - 저장 위치: `out_dir` (기본값은 현재 파일 하위 `reports`)
+    """
+    os.makedirs(out_dir, exist_ok=True)
+    date_str = datetime.now().strftime("%Y%m%d")
+    
+    # 새로운 파일명 형식: survey_report_(SURV_ID)_(TITLE)_(YYYYMMDD).html
+    filename = f"survey_report_{surv_id}_{main_ttl}_{date_str}.html"
+    
+    path = os.path.join(out_dir, filename)
+    with open(path, "w", encoding="utf-8") as f:
+        f.write(html)
+    return path
 
 ##########################################
 # time utilities
