@@ -2,6 +2,7 @@ from datetime import datetime, date, timedelta
 from zoneinfo import ZoneInfo
 from typing import Optional
 
+from pprint import pprint
 import pandas as pd
 import argparse
 
@@ -107,9 +108,25 @@ if __name__ == "__main__":
     for item in items:
 
         result = should_send(item)
+
+        pprint(item)
+        pprint(result)
         
-        print(item)
-        print(result)
+        # {'DATA_RNG_CD': '7',
+        # 'DAY_CD': '-',
+        # 'DTWK_CD': '-',
+        # 'EMAIL': ['yonggeol93@gmail.com', 'yonggeol93@naver.com'],
+        # 'EMPNO': ['20160793', '20161111'],
+        # 'FRST_RGST_DTTM': '2025-09-26',
+        # 'FRST_RGST_USER_ID': '20160793',
+        # 'LAST_CHNG_DTTM': '2025-09-26',
+        # 'LAST_CHNG_USER_ID': '20160793',
+        # 'SNDG_CTCL_CD': 'DAILY',
+        # 'SNDG_END_DT': '2025-10-31',
+        # 'SNDG_START_DT': '2025-09-26',
+        # 'SNDG_YN': 'Y',
+        # 'SURV_ID': '202407006'}
+        # True
 
     # item = {
     #     'SURV_ID': '202407006',
