@@ -77,7 +77,8 @@ def main(argv: Optional[List[str]] = None) -> int:
 	print(f"[INFO] normalize-stats-weights={'on' if RANKING_NORMALIZE_PER_RESPONDENT else 'off'}")
 	for report_path in generated_reports:
 		print(f"  - {report_path}")
-		
+
+# export PYTHONPATH="$PWD/src:$PYTHONPATH		
 if __name__ == "__main__":
 	# CLI usage: python main.py --csv_file data/20250916_sample_data.csv --survey_info_file data/isb_surv_rpt_info.csv
 	main()

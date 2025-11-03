@@ -142,5 +142,6 @@ def main():
             # summary
             break
 
+# export PYTHONPATH="$PWD/src:$PYTHONPATH
 if __name__ == "__main__":
     main()

@@ -94,8 +94,10 @@ def should_send(item, today=None):
 
     return False
 
-if __name__ == "__main__":
+# export PYTHONPATH="$PWD/src:$PYTHONPATH
 
+if __name__ == "__main__":
+    
     parser = argparse.ArgumentParser()
     parser.add_argument("--csv_file", default="data/isb_surv_rpt_info.csv")
     args = parser.parse_args()

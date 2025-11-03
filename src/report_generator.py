@@ -2,10 +2,8 @@ import csv
 import sys
 import os
 import re
-import math
 import json
 from collections import Counter, defaultdict, OrderedDict
-from datetime import datetime
 from typing import Dict, List, Tuple, Optional, Set
 from itertools import combinations
 
@@ -83,6 +81,39 @@ def _load_env_ranking_weights() -> None:
     RANKING_NORMALIZE_PER_RESPONDENT = _parse_bool_env("RANKING_NORMALIZE_PER_RESPONDENT", RANKING_NORMALIZE_PER_RESPONDENT)
 
 _load_env_ranking_weights()
+
+# 공통 Remark 텍스트
+def build_remark_block(items: List[str]) -> str:
+	"""Remark 항목 목록을 받아 HTML 블록을 생성. 항목이 없으면 빈 문자열 반환."""
+	if not items:
+		return ""
+	return (
+		f'<div style="margin:6px 0 0 0;font-size:11px;line-height:1.6;color:{GRAYSCALE_PALETTE[5]};">'
+		+ '<div style="font-weight:700;color:#67748E;margin-bottom:2px;">※ Remark</div>'
+		+ ''.join(f'<div>{itm}</div>' for itm in items)
+		+ '</div>'
+	)
+
+
+def build_heatmap_remark(base_items: Optional[List[str]] = None, include_edgecase_marker: bool = False) -> str:
+	items: List[str] = []
+	if base_items:
+		items.extend(base_items)
+	if include_edgecase_marker:
+		edge_item = (
+			'· '
+			+ f'<span style="color:{CONTRAST_PALETTE[3]};">■</span>'
+			+ f'<span style="color:{GRAYSCALE_PALETTE[5]};"> : 전체 평균대비 응답순서가 다른 Seg.</span>'
+		)
+		if edge_item not in items:
+			items.append(edge_item)
+	return build_remark_block(items)
+
+
+def has_heatmap_edgecase_marker(html: str) -> bool:
+	marker1 = f"box-shadow: inset 0 0 0 2px {CONTRAST_PALETTE[3]}"
+	marker2 = f"background-color:{CONTRAST_PALETTE[3]}"
+	return (marker1 in html) or (marker2 in html)
 
 # =========================
 # 유틸리티 함수들
@@ -850,25 +881,30 @@ def _build_evaluation_edge_cases_section(edge_cases: List[Dict], all_labels: Lis
 	for lb, lb_cases in grouped_cases.items():
 		rowspan = len(lb_cases)
 		overall = float(lb_cases[0].get("overall_pct", 0.0))
-		pos = label_pos.get(lb, 1)
 		qtitle = str(lb_cases[0].get("question_title", ""))
+		if not qtitle and question_rows:
+			try:
+				qtitle = (question_rows[0].get("qsit_ttl") or "").strip()
+			except Exception:
+				qtitle = ""
+		question_cell_text = html_escape(qtitle) if qtitle else html_escape(lb)
+		avg_text = f" ({overall:.2f}점)" if overall else ""
+		question_cell_html = f"<strong>{question_cell_text}</strong>{avg_text}"
 		for idx, case in enumerate(lb_cases):
 			combo = float(case.get("combo_pct", 0.0))
 			diff_pct = float(case.get("difference", 0.0))
-		# 세그 조합 pill (가운데 정렬, 배경 #EDF1F7, 테두리/모서리 없음, + 구분)
-		pill_parts: List[str] = []
-		for seg, value in case.get("segment_combination", {}).items():
-			display_value = get_segment_display_value(seg, value)
-			pill_parts.append(f'<span style="display:inline-block;background:#EDF1F7;padding:6px 8px;margin:2px 0;white-space:nowrap;">{html_escape(display_value)}</span>')
+			pill_parts: List[str] = []
+			for seg, value in case.get("segment_combination", {}).items():
+				display_value = get_segment_display_value(seg, value)
+				pill_parts.append(f'<span style="display:inline-block;background:#EDF1F7;padding:6px 8px;margin:2px 0;white-space:nowrap;">{html_escape(display_value)}</span>')
 			seg_html = ('<span style="margin:0 6px;color:#6B7280;"> + </span>').join(pill_parts) if pill_parts else '-'
-			# 응답율 셀 색상: 평균 대비 양/음수에 따라 긍정/부정 색 적용
 			is_pos = (diff_pct >= 0)
 			bg = 'rgba(66,98,255,0.08)' if is_pos else 'rgba(226,58,50,0.08)'
 			fg = SUBJECTIVE_POS_BAR_COLOR if is_pos else SUBJECTIVE_NEG_BAR_COLOR
 			parts.append('<tr>')
 			if idx == 0:
 				parts.append(
-					f'<td rowspan="{rowspan}" style="border:1px solid #E5E7EB;padding:8px;vertical-align:middle;font-size:12px;line-height:1.4;"><strong>전체평균: {overall:.3f}</strong><br>{html_escape(qtitle)}</td>'
+					f'<td rowspan="{rowspan}" style="border:1px solid #E5E7EB;padding:8px;vertical-align:middle;font-size:12px;line-height:1.4;">{question_cell_html}</td>'
 				)
 			parts.append(
 				f'<td style="border:1px solid #E5E7EB;padding:8px;vertical-align:middle;font-size:12px;text-align:center;">{seg_html}</td>'
@@ -884,6 +920,7 @@ def _build_evaluation_edge_cases_section(edge_cases: List[Dict], all_labels: Lis
 	parts.append('</tbody></table>')
 	parts.append('</div>')
 	return ''.join(parts)
+
 def _build_question_edge_cases_section(edge_cases: List[Dict], all_labels: List[str] = None, question_rows: List[Dict[str, str]] = None, all_data: List[Dict[str, str]] = None, current_question_id: str = None) -> str:
 	"""일반형(객관식) 교차분석 표를 '기타 응답 요약' 스타일로 생성한다.
 	- 제목: Seg.간 교차분석
@@ -1184,6 +1221,10 @@ def build_general_stats_component(question_rows: List[Dict[str, str]], label_ord
 				else:
 					# 빈 라벨은 '기타'로 집계
 					ordered_counts["기타"] = ordered_counts.get("기타", 0) + 1
+
+	if qtype == "evaluation" and label_order:
+		for label in label_order:
+			ordered_counts.setdefault(label, 0)
 	
 	if not ordered_counts:
 		return ""
@@ -1211,10 +1252,7 @@ def build_general_stats_component(question_rows: List[Dict[str, str]], label_ord
 			return (0, float(label))
 		except Exception:
 			return (1, label)
-	items = []
-	for label in label_order:
-		if label in ordered_counts:
-			items.append((label, ordered_counts[label]))
+	items = [(label, ordered_counts.get(label, 0)) for label in label_order]
 	# label_order에 없더라도 '기타'가 있으면 맨 끝에 추가
 	if "기타" in ordered_counts and all(lbl != "기타" for (lbl, _cnt) in items):
 		items.append(("기타", ordered_counts["기타"]))
@@ -1226,14 +1264,14 @@ def build_general_stats_component(question_rows: List[Dict[str, str]], label_ord
 	if qtype == "evaluation":
 		legend_html = build_legend_table_from_items_heatmap_evaluation_with_numbers(items, question_rows)
 		chart_html = build_stacked_bar_html_ordered_height_heatmap(items, 110)
-		# 평가형 전용: 그래프 하단 좌/우 라벨(MINM_LBL_TXT, MAX_LBL_TXT)
+		# 평가형 전용: 그래프 하단 좌/우 라벨(minm_lbl_txt, max_lbl_txt)
 		#   - 좌측(최소치)은 빨강, 우측(최대치)은 파랑으로 시각적 구분
 		try:
-			min_label = ((question_rows[0].get("MINM_LBL_TXT") or "").strip()) if question_rows else ""
+			min_label = ((question_rows[0].get("minm_lbl_txt") or "").strip()) if question_rows else ""
 		except Exception:
 			min_label = ""
 		try:
-			max_label = ((question_rows[0].get("MAX_LBL_TXT") or "").strip()) if question_rows else ""
+			max_label = ((question_rows[0].get("max_lbl_txt") or "").strip()) if question_rows else ""
 		except Exception:
 			max_label = ""
 		if min_label or max_label:
@@ -2786,6 +2824,7 @@ def build_heatmap_component(
 	all_data: List[Dict[str, str]] = None,
 	question_id: str = None,
 	extra_footer_html: str = '',
+	remark_base_items: Optional[List[str]] = None,
 ) -> str:
 	"""단일 히트맵 컴포넌트 생성.
 	옵션에 따라 일반형/평가형, 교차분석 유무, 기타요약 유무를 제어한다.
@@ -2805,31 +2844,12 @@ def build_heatmap_component(
 			edge_cases.extend(_analyze_cross_segments(question_rows, question_title or ("평가형 문항" if kind=='evaluation' else "객관식 문항"), qtype_for_cross, label))
 		edge_cases_section = _build_question_edge_cases_section(edge_cases, order, question_rows, all_data, question_id)
 
-	# 히트맵 내 엣지케이스 존재 여부를 테이블 HTML에서 탐지
-	def _has_edgecase_marker(html: str) -> bool:
-		marker1 = f"box-shadow: inset 0 0 0 2px {CONTRAST_PALETTE[3]}"
-		marker2 = f"background-color:{CONTRAST_PALETTE[3]}"
-		return (marker1 in html) or (marker2 in html)
+	has_table_edgecase = has_heatmap_edgecase_marker(table)
+	has_cross_edgecase = bool(edge_cases) if include_cross_analysis else False
 
-	has_table_edgecase = _has_edgecase_marker(table)
-	has_cross_edgecase = False
-	if include_cross_analysis:
-		# edge_cases 변수가 존재하는 경우에만 판정 (없으면 False)
-		try:
-			has_cross_edgecase = bool(edge_cases)
-		except Exception:
-			has_cross_edgecase = False
-
-	# Remark 블록 구성: 항상 노출, 아이콘 항목은 엣지케이스 있을 때만 추가
-	remark_items: List[str] = []
-	remark_items.append('· 분석 시점에 탈회고객이 포함된 경우, 해당 고객은 Seg.분석에서 제외되어 Seg.별 응답자수 합이 전체 응답자 수와 다를 수 있음')
-	if has_table_edgecase or has_cross_edgecase:
-		remark_items.append('· ' + f'<span style="color:{CONTRAST_PALETTE[3]};">■</span>' + f'<span style="color:{GRAYSCALE_PALETTE[5]};"> : 전체 평균대비 응답순서가 다른 Seg.</span>')
-	legend_note_html = (
-		f'<div style="margin:6px 0 0 0;font-size:11px;line-height:1.6;color:{GRAYSCALE_PALETTE[5]};">'
-		+ '<div style="font-weight:700;color:#67748E;margin-bottom:2px;">※ Remark</div>'
-		+ ''.join([f'<div>{itm}</div>' for itm in remark_items])
-		+ '</div>'
+	legend_note_html = build_heatmap_remark(
+		base_items=remark_base_items,
+		include_edgecase_marker=(has_table_edgecase or has_cross_edgecase),
 	)
 	
 	# 기타 응답 요약 (일반형에서만 의미 있음)
@@ -2856,6 +2876,7 @@ def build_general_heatmap_only(question_rows: List[Dict[str, str]], label_order:
 		question_title=question_title,
 		all_data=all_data,
 		question_id=question_id,
+		remark_base_items=[DEFAULT_HEATMAP_REMARK_BASE],
 	)
 
 def build_evaluation_heatmap_only(question_rows: List[Dict[str, str]], label_order: List[str], question_title: str = "평가형 문항", all_data: List[Dict[str, str]] = None, question_id: str = None) -> str:
@@ -2894,6 +2915,7 @@ def build_evaluation_heatmap_only(question_rows: List[Dict[str, str]], label_ord
 		question_title=question_title,
 		all_data=all_data,
 		question_id=question_id,
+		remark_base_items=[DEFAULT_HEATMAP_REMARK_BASE],
 	)
 
 def _hex_to_rgb(h: str) -> Tuple[int, int, int]:
@@ -3392,12 +3414,17 @@ def build_objective_evaluation_heatmap(question_rows: List[Dict[str, str]], labe
 
 	# 교차분석 엣지케이스 수집 (평가형은 전체 평균 점수 기준)
 	edge_cases = _analyze_evaluation_cross_segments(question_rows, question_title)
-	
+
+	remark_html = build_heatmap_remark(
+		base_items=[DEFAULT_HEATMAP_REMARK_BASE],
+		include_edgecase_marker=(has_heatmap_edgecase_marker(table) or bool(edge_cases)),
+	)
+
 	# 엣지케이스 섹션 생성 (평가형용)
 	edge_cases_section = _build_evaluation_edge_cases_section(edge_cases, order, question_rows, all_data, question_id)
-	
+
 	# 요약(카드/랭크) 제거하고 제목 바로 아래 히트맵 표시
-	return '<div style="margin:12px 0;padding:12px;border:1px solid #E5E7EB;border-radius:6px;background:#FFFFFF;">' + heading + table + edge_cases_section + '</div>'
+	return '<div style="margin:12px 0;padding:12px;border:1px solid #E5E7EB;border-radius:6px;background:#FFFFFF;">' + heading + table + remark_html + edge_cases_section + '</div>'
 
 
 def detect_encoding(file_path: str) -> str:
@@ -3590,6 +3617,31 @@ def sortkey_for_row(r: Dict[str, str]):
 		return float(s)
 	except Exception:
 		return s
+
+
+def _expected_evaluation_numeric_labels(question_rows: List[Dict[str, str]]) -> List[str]:
+	"""평가형 문항에서 척도 정의(lbl_type_ds_cd)를 기반으로 기대되는 숫자 라벨 목록을 생성."""
+	max_scale = 0
+	pad_width = 0
+	has_numeric_label = False
+	for r in question_rows:
+		raw_max = (r.get("lbl_type_ds_cd") or "").strip()
+		if raw_max.isdigit():
+			max_scale = max(max_scale, int(raw_max))
+		for key in ("lkng_cntnt", "answ_cntnt"):
+			val = (r.get(key) or "").strip()
+			if val.isdigit():
+				has_numeric_label = True
+				pad_width = max(pad_width, len(val))
+	if max_scale <= 0 or not has_numeric_label:
+		return []
+	if pad_width <= 0:
+		pad_width = len(str(max_scale))
+	if pad_width <= 0:
+		pad_width = 1
+	return [str(i).zfill(pad_width) for i in range(1, max_scale + 1)]
+
+
 def compute_overall_distribution(question_rows: List[Dict[str, str]]):
 	"""(OrderedDict[label->count], label_order, qtype)를 반환.
 	- 원천 데이터에서 중복 제거를 수행하므로 추가 dedup을 하지 않습니다.
@@ -3604,6 +3656,18 @@ def compute_overall_distribution(question_rows: List[Dict[str, str]]):
 		counts[lb] += 1
 		if lb not in sortmap:
 			sortmap[lb] = sortkey_for_row(r)
+
+	if qtype == "evaluation":
+		expected_labels = _expected_evaluation_numeric_labels(question_rows)
+		if expected_labels:
+			for label in expected_labels:
+				if label not in counts:
+					counts[label] = 0
+				if label not in sortmap:
+					try:
+						sortmap[label] = float(label)
+					except Exception:
+						sortmap[label] = label
 
 	def _mixed_sort_key(v: object):
 		if isinstance(v, (int, float)):
@@ -3649,20 +3713,23 @@ def build_stacked_bar_html_ordered(items: List[Tuple[str, int]]) -> str:
 	cumulative_start_pct = 0.0
 	for idx, (label, count) in enumerate(items):
 		pct = round(count * 100.0 / total, 2)
-		width = max(1.0, pct)
+		segment_pct = max(pct, 0.0)
 		color = color_for_index(idx)
-		segment_px = (width / 100.0) * approx_chart_width_px
-		hide_inner = segment_px < GRAPH_INTERNAL_TEXT_MIN_PX
+		segment_px = max(0.0, (segment_pct / 100.0) * approx_chart_width_px)
+		hide_inner = segment_px < GRAPH_INTERNAL_TEXT_MIN_PX or segment_pct <= 0.0
 		inner_text = "" if hide_inner else f"{pct:.1f}%"
+		width_style = f"width:{segment_pct}%;"
+		if segment_pct <= 0.0:
+			width_style += "min-width:1px;max-width:1px;"
 		segments_html.append(
-			f'<td style="padding:0;height:50px;background:{color};width:{width}%;text-align:center;overflow:hidden;">'
+			f'<td style="padding:0;height:50px;background:{color};{width_style}text-align:center;overflow:hidden;">'
 			f'<div style="display:block;width:100%;color:#FFFFFF;font-size:11px;line-height:50px;white-space:nowrap;overflow:hidden;text-overflow:clip;">{inner_text}</div>'
 			'</td>'
 		)
-		if hide_inner:
+		if hide_inner and segment_pct > 0.0:
 			text = f"{pct:.1f}%"
 			external_labels.append((text, cumulative_start_pct))
-		cumulative_start_pct += width
+		cumulative_start_pct += segment_pct
 
 	captions_row = ""
 	if external_labels:
@@ -3678,13 +3745,13 @@ def build_stacked_bar_html_ordered(items: List[Tuple[str, int]]) -> str:
 		for i, (text, start_pct) in enumerate(external_labels):
 			y_top = i * (row_h + row_gap)
 			label_divs.append(
-				f'<div style="position:absolute;left:{start_pct}%;top:{y_top}px;height:{row_h}px;text-align:left;color:#111827;font-size:11px;line-height:{row_h}px;">{text}</div>'
+				f'<div style="position:absolute;left:{start_pct}%;top:{y_top}px;height:{row_h}px;text-align:left;color:#111827;font-size:11px;line-height:{row_h}px;white-space:nowrap;">{text}</div>'
 			)
 		stack = f'<div style="position:relative;height:{total_h}px;">' + guidelines + "".join(label_divs) + '</div>'
 		captions_row = f"<tr><td colspan=\"{len(items)}\" style=\"padding:0;\">{stack}</td></tr>"
 	mt_top = 2 if external_labels else 6
 	return (
-		f'<table role="presentation" cellpadding="0" cellspacing="0" border="0" style="width:100%;table-layout:fixed;border-collapse:collapse;margin-top:{mt_top}px;">'
+		f'<table role="presentation" cellpadding="0" cellspacing="0" border="0" style="width:100%;border-collapse:collapse;margin-top:{mt_top}px;">'
 		+ "<tr>" + "".join(segments_html) + "</tr>"
 		+ captions_row
 		+ "</table>"
@@ -3704,21 +3771,24 @@ def build_stacked_bar_html_ordered_height(items: List[Tuple[str, int]], height_p
 	cumulative_start_pct = 0.0
 	for idx, (label, count) in enumerate(items):
 		pct = round(count * 100.0 / total, 2)
-		width = max(1.0, pct)
+		segment_pct = max(pct, 0.0)
 		color = color_for_index(idx)
 		text_color = _auto_text_color(color)
-		segment_px = (width / 100.0) * approx_chart_width_px
-		hide_inner = segment_px < GRAPH_INTERNAL_TEXT_MIN_PX
+		segment_px = max(0.0, (segment_pct / 100.0) * approx_chart_width_px)
+		hide_inner = segment_px < GRAPH_INTERNAL_TEXT_MIN_PX or segment_pct <= 0.0
 		inner_text = "" if hide_inner else f"{pct:.1f}%"
+		width_style = f"width:{segment_pct}%;"
+		if segment_pct <= 0.0:
+			width_style += "min-width:1px;max-width:1px;"
 		segments_html.append(
-			f'<td style="padding:0;height:{height_px}px;background:{color};width:{width}%;text-align:center;overflow:hidden;">'
+			f'<td style="padding:0;height:{height_px}px;background:{color};{width_style}text-align:center;overflow:hidden;">'
 			f'<div style="display:block;width:100%;color:{text_color};font-size:11px;line-height:{height_px}px;white-space:nowrap;overflow:hidden;text-overflow:clip;">{inner_text}</div>'
 			'</td>'
 		)
-		if hide_inner:
+		if hide_inner and segment_pct > 0.0:
 			text = f"{pct:.1f}%"
 			external_labels.append((text, cumulative_start_pct))
-		cumulative_start_pct += width
+		cumulative_start_pct += segment_pct
 
 	captions_row = ""
 	if external_labels:
@@ -3734,12 +3804,12 @@ def build_stacked_bar_html_ordered_height(items: List[Tuple[str, int]], height_p
 		for i, (text, start_pct) in enumerate(external_labels):
 			y_top = i * (row_h + row_gap)
 			label_divs.append(
-				f'<div style="position:absolute;left:{start_pct}%;top:{y_top}px;height:{row_h}px;text-align:left;color:#111827;font-size:11px;line-height:{row_h}px;">{text}</div>'
+				f'<div style="position:absolute;left:{start_pct}%;top:{y_top}px;height:{row_h}px;text-align:left;color:#111827;font-size:11px;line-height:{row_h}px;white-space:nowrap;">{text}</div>'
 			)
 		stack = f'<div style="position:relative;height:{total_h}px;">' + guidelines + "".join(label_divs) + '</div>'
 		captions_row = f"<tr><td colspan=\"{len(items)}\" style=\"padding:0;\">{stack}</td></tr>"
 	return (
-		'<table role="presentation" cellpadding="0" cellspacing="0" border="0" style="width:100%;table-layout:fixed;border-collapse:collapse;margin-top:6px;">'
+		'<table role="presentation" cellpadding="0" cellspacing="0" border="0" style="width:100%;border-collapse:collapse;margin-top:6px;">'
 		+ "<tr>" + "".join(segments_html) + "</tr>"
 		+ captions_row
 		+ "</table>"
@@ -3759,21 +3829,24 @@ def build_stacked_bar_html_ordered_height_evaluation(items: List[Tuple[str, int]
 	cumulative_start_pct = 0.0
 	for idx, (label, count) in enumerate(items):
 		pct = round(count * 100.0 / total, 2)
-		width = max(1.0, pct)
 		color = color_for_evaluation_index(idx, len(items))
 		text_color = _auto_text_color(color)
-		segment_px = (width / 100.0) * approx_chart_width_px
-		hide_inner = segment_px < GRAPH_INTERNAL_TEXT_MIN_PX
+		segment_pct = max(pct, 0.0)
+		segment_px = max(0.0, (segment_pct / 100.0) * approx_chart_width_px)
+		hide_inner = segment_px < GRAPH_INTERNAL_TEXT_MIN_PX or segment_pct <= 0.0
 		inner_text = "" if hide_inner else f"{pct:.1f}%"
+		width_style = f"width:{segment_pct}%;"
+		if segment_pct <= 0.0:
+			width_style += "min-width:1px;max-width:1px;"
 		segments_html.append(
-			f'<td style="padding:0;height:{height_px}px;background:{color};width:{width}%;text-align:center;overflow:hidden;">'
+			f'<td style="padding:0;height:{height_px}px;background:{color};{width_style}text-align:center;overflow:hidden;">'
 			f'<div style="display:block;width:100%;color:{text_color};font-size:11px;line-height:{height_px}px;white-space:nowrap;overflow:hidden;text-overflow:clip;">{inner_text}</div>'
 			'</td>'
 		)
-		if hide_inner:
+		if hide_inner and segment_pct > 0.0:
 			text = f"{pct:.1f}%"
 			external_labels.append((text, cumulative_start_pct))
-		cumulative_start_pct += width
+		cumulative_start_pct += segment_pct
 
 	# 외부 라벨 스택과 세로 지시선 렌더링
 	captions_row = ""
@@ -3790,13 +3863,13 @@ def build_stacked_bar_html_ordered_height_evaluation(items: List[Tuple[str, int]
 		for i, (text, start_pct) in enumerate(external_labels):
 			y_end = (i+1)*row_h + i*row_gap
 			label_divs.append(
-				f'<div style="position:absolute;left:{start_pct}%;top:{y_end}px;height:{row_h}px;text-align:left;color:#111827;font-size:11px;line-height:{row_h}px;">{text}</div>'
+				f'<div style="position:absolute;left:{start_pct}%;top:{y_end}px;height:{row_h}px;text-align:left;color:#111827;font-size:11px;line-height:{row_h}px;white-space:nowrap;">{text}</div>'
 			)
 		container_h = total_h + row_h
 		stack = f'<div style="position:relative;height:{container_h}px;">' + guidelines + "".join(label_divs) + '</div>'
 		captions_row = f"<tr><td colspan=\"{len(items)}\" style=\"padding:0;\">{stack}</td></tr>"
 	return (
-		'<table role="presentation" cellpadding="0" cellspacing="0" border="0" style="width:100%;table-layout:fixed;border-collapse:collapse;margin-top:6px;">'
+		'<table role="presentation" cellpadding="0" cellspacing="0" border="0" style="width:100%;border-collapse:collapse;margin-top:6px;">'
 		+ "<tr>" + "".join(segments_html) + "</tr>"
 		+ captions_row
 		+ "</table>"
@@ -3816,21 +3889,24 @@ def build_stacked_bar_html_ordered_height_heatmap(items: List[Tuple[str, int]], 
 	cumulative_start_pct = 0.0
 	for idx, (label, count) in enumerate(items):
 		pct = round(count * 100.0 / total, 2)
-		width = max(1.0, pct)
+		segment_pct = max(pct, 0.0)
 		color = color_for_stats_with_heatmap_shades(idx, len(items))
 		text_color = _auto_text_color(color)
-		segment_px = (width / 100.0) * approx_chart_width_px
-		hide_inner = segment_px < GRAPH_INTERNAL_TEXT_MIN_PX
+		segment_px = max(0.0, (segment_pct / 100.0) * approx_chart_width_px)
+		hide_inner = segment_px < GRAPH_INTERNAL_TEXT_MIN_PX or segment_pct <= 0.0
 		inner_text = "" if hide_inner else f"{pct:.1f}%"
+		width_style = f"width:{segment_pct}%;"
+		if segment_pct <= 0.0:
+			width_style += "min-width:1px;max-width:1px;"
 		segments_html.append(
-			f'<td style="padding:0;height:{height_px}px;background:{color};width:{width}%;text-align:center;overflow:hidden;">'
+			f'<td style="padding:0;height:{height_px}px;background:{color};{width_style}text-align:center;overflow:hidden;">'
 			f'<div style="display:block;width:100%;color:{text_color};font-size:11px;line-height:{height_px}px;white-space:nowrap;overflow:hidden;text-overflow:clip;">{inner_text}</div>'
 			'</td>'
 		)
-		if hide_inner:
+		if hide_inner and segment_pct > 0.0:
 			text = f"{pct:.1f}%"
 			external_labels.append((text, cumulative_start_pct))
-		cumulative_start_pct += width
+		cumulative_start_pct += segment_pct
 
 	# 외부 라벨 스택과 세로 지시선 렌더링
 	captions_row = ""
@@ -3847,7 +3923,7 @@ def build_stacked_bar_html_ordered_height_heatmap(items: List[Tuple[str, int]], 
 		for i, (text, start_pct) in enumerate(external_labels):
 			y_end = (i+1)*row_h + i*row_gap
 			label_divs.append(
-				f'<div style="position:absolute;left:{start_pct}%;top:{y_end}px;height:{row_h}px;text-align:left;color:#111827;font-size:11px;line-height:{row_h}px;">{text}</div>'
+				f'<div style="position:absolute;left:{start_pct}%;top:{y_end}px;height:{row_h}px;text-align:left;color:#111827;font-size:11px;line-height:{row_h}px;white-space:nowrap;">{text}</div>'
 			)
 		container_h = total_h + row_h
 		stack = f'<div style="position:relative;height:{container_h}px;">' + guidelines + "".join(label_divs) + '</div>'
@@ -3867,14 +3943,18 @@ def build_stacked_bar_with_labels(items: List[Tuple[str, int]]) -> str:
 	cells: List[str] = []
 	for idx, (label, count) in enumerate(items):
 		pct = round(count * 100.0 / total, 1)
-		width = round(max(1.0, count * 100.0 / total), 2)
+		width_pct = round(max(count * 100.0 / total, 0.0), 2)
 		color = color_for_index(idx)
 		text = f"{count} ({pct}%)"
-		label_html = text if width >= 12 else ""
+		label_html = text if width_pct >= 12 else ""
+		if width_pct <= 0.0:
+			width_style = "width:0;min-width:1px;max-width:1px;"
+		else:
+			width_style = f"width:{width_pct}%;"
 		cells.append(
 			(
 				'<td style="padding:0;height:12px;vertical-align:middle;text-align:center;'
-				f'background:{color};width:{width}%;color:#FFFFFF;font-size:11px;line-height:12px;">'
+				f'background:{color};{width_style}color:#FFFFFF;font-size:11px;line-height:12px;white-space:nowrap;">'
 				+ label_html + "</td>"
 			)
 		)
@@ -3972,13 +4052,15 @@ def build_legend_table_from_items_heatmap_with_numbers(items: List[Tuple[str, in
 
 def build_legend_table_from_items_heatmap_evaluation_with_numbers(items: List[Tuple[str, int]], question_rows: List[Dict[str, str]] = None) -> str:
 	"""평가형 범례에 중간 레이블(LBL_TXT)을 추가하고 극값 색상을 부여한다.
-	- answ_cntnt==1 → #E23A32, answ_cntnt==최대척도(LBL_TYPE_DS_CD 또는 추정) → #4262FF, 그 외 #6B7280
+	- answ_cntnt==1 → #E23A32, answ_cntnt==최대척도(lbl_type_ds_cd 또는 추정) → #4262FF, 그 외 #6B7280
 	"""
 	total = sum(c for _, c in items) or 1
-	# label → (score, extra)
+	# label → score 매핑
 	label_to_score: Dict[str, int] = {}
-	label_to_extra: Dict[str, str] = {}
 	max_scale = 0
+	min_label_txt = ""
+	mid_label_txt = ""
+	max_label_txt = ""
 	if question_rows:
 		for r in question_rows:
 			lb = (r.get("lkng_cntnt") or "").strip()
@@ -3987,17 +4069,27 @@ def build_legend_table_from_items_heatmap_evaluation_with_numbers(items: List[Tu
 				label_to_score[lb] = int(ans)
 				if int(ans) > max_scale:
 					max_scale = int(ans)
-			extra = (r.get("LBL_TXT") or "").strip()
-			if lb and extra and lb not in label_to_extra:
-				label_to_extra[lb] = extra
-		# 최대 척도 후보: LBL_TYPE_DS_CD
+			if not min_label_txt:
+				min_label_txt = (r.get("minm_lbl_txt") or "").strip()
+			if not mid_label_txt:
+				mid_label_txt = (r.get("mddl_lbl_txt") or "").strip()
+			if not max_label_txt:
+				max_label_txt = (r.get("max_lbl_txt") or "").strip()
+		# 최대 척도 후보: lbl_type_ds_cd
 		try:
 			for r in question_rows:
-				v = (r.get("LBL_TYPE_DS_CD") or "").strip()
+				v = (r.get("lbl_type_ds_cd") or "").strip()
 				if v.isdigit():
 					max_scale = max(max_scale, int(v))
 		except Exception:
 			pass
+		# 평가형 예상 라벨 보강 (응답이 없어도 score 매핑 유지)
+		for expected_label in _expected_evaluation_numeric_labels(question_rows):
+			if expected_label not in label_to_score and expected_label.isdigit():
+				try:
+					label_to_score[expected_label] = int(expected_label)
+				except Exception:
+					continue
 	if max_scale <= 0:
 		# 숫자형 라벨 최대값 또는 항목 수로 추정
 		try:
@@ -4008,10 +4100,14 @@ def build_legend_table_from_items_heatmap_evaluation_with_numbers(items: List[Tu
 
 	# 엔트리 사전 구성 (병합 처리를 위해)
 	entries: List[Dict[str, object]] = []
+	if max_scale > 0:
+		_mid = (max_scale + 1) / 2.0
+		mid_score = int(_mid) if abs(_mid - int(_mid)) < 1e-9 else None
+	else:
+		mid_score = None
 	for idx, (label, count) in enumerate(items):
 		pct = round(count * 100.0 / total, 1)
 		color = color_for_stats_with_heatmap_shades(idx, len(items))
-		extra_txt = label_to_extra.get(str(label), "")
 		score = label_to_score.get(str(label))
 		extra_color = "#6B7280"
 		arrow_html = ""
@@ -4028,6 +4124,15 @@ def build_legend_table_from_items_heatmap_evaluation_with_numbers(items: List[Tu
 			elif mid_val < score < max_scale:
 				arrow_html = '<span style="color:#4262FF;font-size:20px;">↓</span>'
 				category = 'upper_mid'
+			extra_txt = ""
+			if score == 1 and min_label_txt:
+				extra_txt = min_label_txt
+			elif score == max_scale and max_label_txt:
+				extra_txt = max_label_txt
+			elif mid_score is not None and score == mid_score and mid_label_txt:
+				extra_txt = mid_label_txt
+		else:
+			extra_txt = ""
 		entries.append({
 			'label': label,
 			'count': count,
@@ -4950,42 +5055,6 @@ def extract_keywords(question_rows: List[Dict[str, str]]) -> Counter:
 			ctr[p] += 1
 	return ctr
 
-
-def _shade_for_pct(p: float) -> str:
-    # 0~100 → 감마 보정/끝단강조/중간영역 증폭을 거쳐 0..steps-1로 매핑 (히트맵 팔레트)
-	steps = len(HEATMAP_PALETTE)
-	if steps <= 1:
-		return HEATMAP_PALETTE[0] if HEATMAP_PALETTE else "#E5E7EB"
-	t = max(0.0, min(1.0, p / 100.0))
-    # 감마 적용(HEATMAP_GAMMA): 값이 낮을수록 더 밝게, 높을수록 더 진하게
-	t_gamma = pow(t, HEATMAP_GAMMA)
-    # 끝단 강조(HEATMAP_ALPHA 기반 S-curve): 가운데는 압축, 저/고값은 대비 강화
-	u = 2.0 * t_gamma - 1.0
-	s = (abs(u) ** HEATMAP_ALPHA)
-	if u < 0:
-		s = -s
-	t_emph = (s + 1.0) / 2.0
-    # 중간 구간(20~60%) 대비 증폭(HEATMAP_MIDRANGE_GAIN): 0.5 근처 변화량 확대
-	if 0.2 <= t_emph <= 0.6:
-		m = (t_emph - 0.2) / 0.4  # 0..1
-		m = 0.5 + (m - 0.5) * HEATMAP_MIDRANGE_GAIN
-		# 다시 0.2..0.6 범위로 복귀
-		t_emph = 0.2 + max(0.0, min(1.0, m)) * 0.4
-    # 저/고 구간(≤30%, ≥80%)에서 추가 강조: 끝단에서 더 빨리 진하게/밝게
-	if t_emph >= 0.8:
-		seg = (t_emph - 0.8) / 0.2
-		seg = max(0.0, min(1.0, seg))
-		boost = 0.8 + (seg ** 0.7) * 0.2
-		t_emph = boost
-	elif t_emph <= 0.3:
-		seg = (t_emph / 0.3)
-		seg = max(0.0, min(1.0, seg))
-		boost = (seg ** 0.7) * 0.3
-		t_emph = boost
-	idx = int(round(t_emph * (steps - 1)))
-	idx = max(0, min(steps - 1, idx))
-	return HEATMAP_PALETTE[idx]
-
 def _shade_for_pct_dynamic(p: float, min_pct: float, max_pct: float) -> str:
 	"""동적 범위에 따른 색상 변환. min_pct~max_pct를 HEATMAP_PALETTE 팔레트에 매핑 (히트맵용)."""
 	steps = len(HEATMAP_PALETTE)
@@ -4999,32 +5068,6 @@ def _shade_for_pct_dynamic(p: float, min_pct: float, max_pct: float) -> str:
 	
 	# 연속적인 색상 보간
 	return _interpolate_color(t, HEATMAP_PALETTE)
-
-def _shade_for_stats_dynamic(p: float, min_pct: float, max_pct: float) -> str:
-	"""응답통계용 동적 범위에 따른 색상 변환. min_pct~max_pct를 PRIMARY_PALETTE 팔레트에 매핑."""
-	steps = len(PRIMARY_PALETTE)
-	if steps <= 1:
-		return PRIMARY_PALETTE[0] if PRIMARY_PALETTE else "#E5E7EB"
-	if max_pct <= min_pct:
-		return PRIMARY_PALETTE[steps // 2]  # 중간 색상 반환
-	
-	# min_pct~max_pct를 0~1로 정규화 (단순 선형 변환)
-	t = max(0.0, min(1.0, (p - min_pct) / (max_pct - min_pct)))
-	
-	# 연속적인 색상 보간
-	return _interpolate_color(t, PRIMARY_PALETTE)
-
-def _shade_for_sun_evaluation_dynamic(p: float, min_pct: float, max_pct: float) -> str:
-	"""순만족도 전용 동적 색상 변환. min_pct~max_pct를 SUN_EVALUATION_SHADES 팔레트에 매핑."""
-	steps = len(SUN_EVALUATION_SHADES)
-	if steps <= 1:
-		return SUN_EVALUATION_SHADES[0] if SUN_EVALUATION_SHADES else "#FFF7ED"
-	if max_pct <= min_pct:
-		return SUN_EVALUATION_SHADES[steps // 2]  # 중간 색상 반환
-	# min_pct~max_pct를 0~1로 정규화 (보정 없이 순수하게)
-	t = max(0.0, min(1.0, (p - min_pct) / (max_pct - min_pct)))
-	# 연속적인 색상 보간
-	return _interpolate_color(t, SUN_EVALUATION_SHADES)
 
 def _shade_for_grayscale_dynamic(p: float, min_pct: float, max_pct: float) -> str:
 	"""그레이스케일 동적 색상 변환. min_pct~max_pct를 GRAYSCALE_PALETTE 팔레트에 매핑."""
@@ -5332,6 +5375,7 @@ def build_general_heatmap(question_rows: List[Dict[str, str]], label_order: List
 		question_title=question_title,
 		all_data=all_data,
 		question_id=question_id,
+		remark_base_items=[DEFAULT_HEATMAP_REMARK_BASE],
 	)
 
 if __name__ == "__main__":

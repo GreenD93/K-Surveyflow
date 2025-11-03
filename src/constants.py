@@ -356,6 +356,9 @@ SUBJECTIVE_EXCLUDE_KEYWORDS = {
     "Best", "은행", "없음", "안돼나요", "더", "매우만족"
 }
 
+# 공통 Remark 텍스트
+DEFAULT_HEATMAP_REMARK_BASE = '· 분석 시점에 탈회고객이 포함된 경우, 해당 고객은 Seg.분석에서 제외되어 Seg.별 응답자수 합이 전체 응답자 수와 다를 수 있음'
+
 # 순만족도 전용 색상 팔레트 (주황색 계열)
 SUN_EVALUATION_SHADES = [
 	"#FFF7ED",  # 0% - 매우 밝은 주황
